@@ -4,7 +4,7 @@
 
 ## 仓库结构
 
-- 顶层只有 `WechatOpenSDK.xcframework/`，没有 `README.md`、没有 `.git`、没有 `Package.swift` / `Podspec` / `*.xcodeproj`。
+- 顶层文件：`Package.swift`（SPM binary target 包装）、`AGENTS.md`、`.gitignore`；xcframework 本体**不进 git**（被 `.gitignore` 排除），仅通过 GitHub Release zip 分发。
 - SDK 版本：**2.0.5**（见 `WechatOpenSDK.xcframework/README.txt`，该文件是版本变更日志，不是集成文档）。
 - xcframework 两个 slice：
   - `ios-arm64/` — 真机（arm64）
@@ -26,6 +26,25 @@
 
 ## 工作约定
 
-- 本仓库**不是 git 仓库**（无 `.git` 目录）。如需提交、打 tag、发版，需先与用户确认是否要 `git init` 以及目标远端，不要擅自初始化。
+- xcframework 本体和 zip 都不进 git（见 `.gitignore`），仅通过 GitHub Release asset 分发。集成方通过 SPM 拉取 Package.swift，再按其中 `binaryTarget` 的 url + checksum 下载 zip。
 - 仓库内没有任何可验证代码的命令；改动只可能发生在二进制替换（新版 SDK 下发）或新增集成文档/示例。替换 SDK 前后可通过 `ls -la WechatOpenSDK.xcframework/ios-arm64/WechatOpenSDK.framework/WechatOpenSDK` 与 `file` 命令核对二进制时间戳与架构，不要试图反编译。
 - 查 API 时直接读 `Headers/*.h`，`README.txt` 仅是版本变更日志，不含完整 API 文档。
+
+## 改版流程（升级到 X.Y.Z）
+
+每个版本 = 一个 GitHub Release + 一个 git tag，tag 号 = SDK 版本号 = `Package.swift` 中 url 的版本段。严格按顺序执行：
+
+1. 替换本地 `WechatOpenSDK.xcframework/`（新版 SDK 下发），用 `head -3 WechatOpenSDK.xcframework/README.txt` 确认版本号，`file .../WechatOpenSDK.framework/WechatOpenSDK` 确认架构。
+2. `find WechatOpenSDK.xcframework -name ".DS_Store" -delete` 清理噪声文件（否则 checksum 不稳定）。
+3. `zip -r WechatOpenSDK-X.Y.Z.xcframework.zip WechatOpenSDK.xcframework -x "*.DS_Store" -x "*/.DS_Store"`。
+4. `shasum -a 256 WechatOpenSDK-X.Y.Z.xcframework.zip | awk '{print $1}'` 算 checksum。
+5. 更新 `Package.swift` 的 `url`（版本段同步）与 `checksum`；如新版有依赖/plist 变化，同步更新本文件"集成时容易踩坑的点"段。
+6. `git add` + `git commit -m "Bump WechatOpenSDK to X.Y.Z"` + `git push origin main`。
+7. `gh release create X.Y.Z WechatOpenSDK-X.Y.Z.xcframework.zip --title "WechatOpenSDK X.Y.Z" --notes "微信 OpenSDK X.Y.Z 二进制分发"`。`gh` 会基于当前 HEAD 自动打 tag `X.Y.Z`。
+8. `curl -sL <url> | shasum -a 256` 验证远端 checksum 与本地一致；不一致说明上传有损坏，删 Release 重来。
+
+**不可变约定**：
+
+- 不要修改或强推已发布的 tag，发现 bug 就发新版本（如 `2.0.5.1` 或 `2.0.6`），否则集成方 SPM 缓存会错乱。
+- zip 文件名必须带版本号 `WechatOpenSDK-X.Y.Z.xcframework.zip`，避免 Release asset 同名混淆。
+- 顺序不能反：先打 zip 算 checksum → 改 `Package.swift` → commit → 再 `gh release create`，确保 tag 指向的 commit 已含正确的 `Package.swift`。
